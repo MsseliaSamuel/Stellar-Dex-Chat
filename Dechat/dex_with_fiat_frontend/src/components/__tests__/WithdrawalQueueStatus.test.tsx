@@ -2,15 +2,30 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WithdrawalQueueStatus } from '../WithdrawalQueueStatus';
+import { TranslationProvider } from '@/contexts/TranslationContext';
 import * as hookModule from '@/hooks/useWithdrawalQueueStatus';
 
 vi.mock('@/hooks/useWithdrawalQueueStatus');
+// The hook's module graph imports a contract client whose module-level config
+// is unavailable in unit tests; this component test only needs the mocked hook.
+vi.mock('@/lib/stellarContract', () => ({ fiatBridgeClient: {} }));
+
+const renderQueue = () =>
+  render(
+    <TranslationProvider>
+      <WithdrawalQueueStatus />
+    </TranslationProvider>,
+  );
+
+const normalizeSpaces = (value: string | null) =>
+  value?.replace(/[\u00a0\u202f]/g, ' ');
 
 describe('WithdrawalQueueStatus Component (#60)', () => {
   const mockRefetch = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   it('renders loading state', () => {
@@ -32,7 +47,7 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-loading')).toBeDefined();
     expect(screen.getByText(/Loading withdrawal queue status/)).toBeDefined();
   });
@@ -56,7 +71,7 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-empty')).toBeDefined();
     expect(screen.getByText(/Withdrawal Queue is Empty/)).toBeDefined();
     expect(screen.getByText(/0 pending/)).toBeDefined();
@@ -81,7 +96,7 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-active')).toBeDefined();
     expect(screen.getByText('4 requests')).toBeDefined();
     expect(screen.getByText(/72 ledgers/)).toBeDefined();
@@ -110,7 +125,7 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-stale')).toBeDefined();
     expect(screen.getByText('Stale Data')).toBeDefined();
   });
@@ -134,7 +149,7 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-rpc-error')).toBeDefined();
     expect(screen.getByText('RPC connection lost')).toBeDefined();
 
@@ -164,10 +179,72 @@ describe('WithdrawalQueueStatus Component (#60)', () => {
       refetch: mockRefetch,
     });
 
-    render(<WithdrawalQueueStatus />);
+    renderQueue();
     expect(screen.getByTestId('queue-status-version-mismatch')).toBeDefined();
     expect(
       screen.getByText(/Contract version mismatch: expected v1, found v2/),
     ).toBeDefined();
+  });
+
+  it('uses French plural and number rules when the locale is French', () => {
+    localStorage.setItem('locale', 'fr');
+    vi.mocked(hookModule.useWithdrawalQueueStatus).mockReturnValue({
+      state: 'active',
+      depth: 1234,
+      oldestAgeLedgers: 72,
+      oldestQueuedLedger: 100200,
+      estimatedWaitMinutes: 6,
+      estimatedPosition: 4,
+      specificRequest: null,
+      contractVersion: 1,
+      lastUpdated: Date.now(),
+      isStale: false,
+      errorMessage: null,
+      pollCount: 2,
+      isPollingActive: true,
+      settlementDisclaimer: hookModule.SETTLEMENT_TIME_DISCLAIMER,
+      refetch: mockRefetch,
+    });
+
+    renderQueue();
+
+    expect(
+      normalizeSpaces(screen.getByTestId('queue-status-depth').textContent),
+    ).toBe('1 234 demandes');
+    expect(
+      normalizeSpaces(
+        screen.getByTestId('queue-status-oldest-age').textContent,
+      ),
+    ).toContain('72 registres');
+    expect(screen.getByText('État de la file de retraits')).toBeDefined();
+  });
+
+  it('uses Arabic plural categories with ASCII digits', () => {
+    localStorage.setItem('locale', 'ar');
+    vi.mocked(hookModule.useWithdrawalQueueStatus).mockReturnValue({
+      state: 'active',
+      depth: 2,
+      oldestAgeLedgers: 2,
+      oldestQueuedLedger: 100200,
+      estimatedWaitMinutes: 2,
+      estimatedPosition: 1,
+      specificRequest: null,
+      contractVersion: 1,
+      lastUpdated: Date.now(),
+      isStale: false,
+      errorMessage: null,
+      pollCount: 2,
+      isPollingActive: true,
+      settlementDisclaimer: hookModule.SETTLEMENT_TIME_DISCLAIMER,
+      refetch: mockRefetch,
+    });
+
+    renderQueue();
+
+    expect(screen.getByTestId('queue-status-depth').textContent).toBe('طلبان');
+    expect(screen.getByTestId('queue-status-oldest-age').textContent).toContain(
+      'سجلان',
+    );
+    expect(document.documentElement.dir).toBe('rtl');
   });
 });
