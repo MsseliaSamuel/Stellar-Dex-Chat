@@ -342,10 +342,15 @@ flags.
 ```
 
 Skipping a step returns a typed error without mutating state.
+Full execution, shortcut cancellation, and expiry reclaim remove the withdrawal
+but leave an existing cancellation record in storage. Such an orphan can still
+be approved, but finalization returns `RequestNotFound`; this compatibility
+behavior is covered by `test_cancellation_lifecycle_invariants`.
 
 **Where enforced**: each step reads the current `CancellationStatus` and
 returns `CancellationNotRequested`, `CancellationAlreadyRequested`, or
-`CancellationNotApproved` for out-of-sequence calls.
+`CancellationNotApproved` for out-of-sequence calls. `finalize_cancellation`
+is the only path that deletes the cancellation record.
 
 **Test modules**:
 - `test_cancellation_lifecycle_invariants::full_lifecycle_request_approve_finalize`

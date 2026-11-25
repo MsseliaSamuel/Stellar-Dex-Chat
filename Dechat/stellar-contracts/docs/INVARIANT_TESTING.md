@@ -316,17 +316,23 @@ the full success path where that fixture is available.
 
 A stateful model-based harness introduced in Issue #173. It maintains a
 `LifecycleModel` reference model alongside the live contract and asserts, after
-every accepted operation, that:
+every generated operation, that:
 
 - The model and the contract agree on `total_deposited`, `total_withdrawn`,
-  and `total_liabilities` (model consistency).
+  `total_liabilities`, queue depth, each active request's recipient and
+  remaining amount, and cancellation status/snapshot (model consistency).
 - All three core accounting invariants hold (INV-A1–A3).
+- The ordered FiatBridge event names emitted since setup agree with the
+  model's expected outcomes, including the two deposit events and the two
+  events emitted on cancellation finalization.
 - Request IDs are strictly monotonic and never recycled across any combination
   of full execution, partial execution, three-step cancellation, shortcut
   cancellation, and expiry reclaim (INV-Q1).
 - Queue depth changes by exactly one per enqueue / dequeue (INV-Q2).
 - The cancellation state machine advances only Requested → Approved → (deleted)
   and returns typed errors for out-of-sequence calls (INV-C1).
+- Orphan cancellation records are preserved after terminal queue removal, and
+  finalization of an orphan returns `RequestNotFound`.
 - Liabilities do not change before finalization (INV-C2).
 - Reclaim before the expiry window returns `WithdrawalLocked` (INV-E1).
 - Rejected calls leave no partial state (INV-Z3).
