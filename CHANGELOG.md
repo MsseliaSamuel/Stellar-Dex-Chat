@@ -473,6 +473,8 @@ Repo Avatar
 - **a11y:** Announce asynchronous payout transitions once
 - **frontend:** Enforce critical financial coverage thresholds
 - Resolve issues #201 #202 #203 #204 - offline queue replay prevention, quote expiry UX, schema versioning, account-scoped chat privacy
+- **contracts:** FiatBridge invariant spec and withdrawal lifecycle model tests
+- **a11y:** Respect reduced motion and validate status contrast
 
 ### Fixed
 
@@ -1007,6 +1009,11 @@ Repo Avatar
 - **a11y:** Complete transaction confirmation WCAG 2.2 AA flow
 - #192 Show a decoded transaction effects diff before wallet signing
 - #193 Replace scattered network constants with validated network pro
+- #198 Recover expired Soroban transactions without duplicate payouts
+- #199 Make multi-step wallet signing resilient to partial completion
+- #200 Partition client caches by wallet, network, and schema version
+- #204 Enforce account-scoped privacy for chat search and export
+- **a11y:** Cover failure summary and prefers-contrast
 
 ### Changed
 
@@ -1383,6 +1390,8 @@ Repo Avatar
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- **contracts:** Compare lifecycle model outcomes
 
 ### Deprecated
 
