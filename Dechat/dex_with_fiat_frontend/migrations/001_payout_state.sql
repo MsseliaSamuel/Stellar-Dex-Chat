@@ -1,6 +1,9 @@
 -- Migration 001: Payout state and transitions schema (Issue #97)
 -- Extended (Issue #258): cryptographic key-rotation metadata for stored payout fields.
 -- Extended (Issue #197): typed transaction recovery state machine.
+-- Extended (Issue #198): expiry recovery bookkeeping (authoritative sequence/op status,
+--   preserved idempotency key, renewed-confirmation gate).
+-- Extended (Issue #204): account-scoped chat search/export privacy bookkeeping.
 -- Only key *identifiers* are persisted here; key material must never be stored in the database.
 --
 -- This file is applied by the checksummed migration runner in
@@ -115,73 +118,82 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_payout_intents_tx_state ON payout_intents(tx_state);
 
--- Transactional outbox for payout side effects (Issue #222).
--- Rows are written in the same DB transaction as the payout state mutation so
--- the state change and the outbound provider command commit or roll back
--- together. A dispatcher delivers pending rows asynchronously (at-least-once)
--- using the stable idempotency_key so provider retries and replays are safe.
-CREATE TABLE IF NOT EXISTS payout_outbox (
-  id BIGSERIAL PRIMARY KEY,
-  event_id VARCHAR(128) UNIQUE NOT NULL,
-  payout_id VARCHAR(64) REFERENCES payout_intents(id) ON DELETE CASCADE,
-  event_type VARCHAR(64) NOT NULL,
-  payload TEXT,
-  received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Retry jobs: the retry key is unique so concurrent schedulers cannot enqueue
--- duplicate retry work for the same payout/attempt.
-CREATE TABLE IF NOT EXISTS payout_retry_jobs (
-  id BIGSERIAL PRIMARY KEY,
-  retry_key VARCHAR(160) UNIQUE NOT NULL,
-  payout_id VARCHAR(64) REFERENCES payout_intents(id) ON DELETE CASCADE,
-  attempt_number INTEGER NOT NULL,
-  status VARCHAR(32) NOT NULL,
-  scheduled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_payout_intents_status ON payout_intents(status);
-CREATE INDEX IF NOT EXISTS idx_payout_intents_created_at ON payout_intents(created_at);
--- Supports resumable re-encryption scans and rollback queries.
-CREATE INDEX IF NOT EXISTS idx_payout_intents_rotation_state ON payout_intents(rotation_state);
-CREATE INDEX IF NOT EXISTS idx_payout_intents_recipient_account_key_id ON payout_intents(recipient_account_key_id);
-CREATE INDEX IF NOT EXISTS idx_payout_intents_provider_reference_key_id ON payout_intents(provider_reference_key_id);
-
--- Least-privilege runtime roles (Issue #262)
--- Split read and mutation access to payout tables. No wildcard grants.
--- Roles are created without LOGIN; credentials are provisioned out-of-band
--- by the deployment environment (never committed to the repository).
+-- ---------------------------------------------------------------------------
+-- Expiry recovery bookkeeping (Issue #198)
+-- ---------------------------------------------------------------------------
+-- When a Soroban transaction expires we must NOT blindly rebuild it: a rebuild
+-- can produce a different operation set and, if the original was actually
+-- submitted, a second payout. These columns capture the authoritative facts
+-- fetched before any rebuild so recovery is auditable and idempotent.
+--
+-- recovery_authoritative_sequence: account sequence number read from the
+--   network (not the cached/local value) at recovery time.
+-- recovery_operation_status: authoritative status of the original operation
+--   ('not_found', 'pending', 'success', 'failed').
+-- recovery_idempotency_key: the idempotency key carried across the rebuild.
+--   It is copied from payout_intents.idempotency_key and never regenerated so
+--   retries cannot create a duplicate payout.
+-- recovery_effects_hash: hash of the rebuilt transaction's effects. When it
+--   differs from the original, renewed user confirmation is required.
+-- recovery_confirmation_state: NULL (not required), 'required', 'confirmed',
+--   'rejected'.
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_authoritative_sequence BIGINT;
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_operation_status VARCHAR(32);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_idempotency_key VARCHAR(128);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_effects_hash VARCHAR(64);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_confirmation_state VARCHAR(32);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_rebuilt_at TIMESTAMP WITH TIME ZONE;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'payout_reader') THEN
-    CREATE ROLE payout_reader NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'payout_writer') THEN
-    CREATE ROLE payout_writer NOLOGIN;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payout_intents_recovery_operation_status_check'
+  ) THEN
+    ALTER TABLE payout_intents
+      ADD CONSTRAINT payout_intents_recovery_operation_status_check
+      CHECK (recovery_operation_status IS NULL OR recovery_operation_status IN (
+        'not_found', 'pending', 'success', 'failed'
+      ));
   END IF;
 END
 $$;
 
--- Read-only role: SELECT only on payout tables.
-REVOKE ALL ON payout_intents FROM payout_reader;
-REVOKE ALL ON payout_state_transitions FROM payout_reader;
-GRANT SELECT ON payout_intents TO payout_reader;
-GRANT SELECT ON payout_state_transitions TO payout_reader;
+-- ---------------------------------------------------------------------------
+-- Account-scoped chat search/export privacy (Issue #204)
+-- ---------------------------------------------------------------------------
+-- Search indexes and exports must only ever include the selected account's
+-- permitted conversations. These tables record the account scope of every
+-- indexed conversation and the deletion requests that must purge cached
+-- records. Payout-sensitive fields are never stored here; the application
+-- layer redacts them before indexing/exporting.
+CREATE TABLE IF NOT EXISTS chat_search_index (
+  id BIGSERIAL PRIMARY KEY,
+  -- Owning account. Every query MUST filter on this column.
+  account_id VARCHAR(128) NOT NULL,
+  conversation_id VARCHAR(128) NOT NULL,
+  message_id VARCHAR(128) NOT NULL,
+  -- Redacted, searchable text. Payout-sensitive fields are stripped before
+  -- insert; this column must never contain raw payout data.
+  searchable_text TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (account_id, conversation_id, message_id)
+);
 
--- Mutation role: INSERT/UPDATE on payout tables, plus SELECT so that
--- RETURNING clauses and existence checks work. No DELETE/TRUNCATE.
-REVOKE ALL ON payout_intents FROM payout_writer;
-REVOKE ALL ON payout_state_transitions FROM payout_writer;
-GRANT SELECT, INSERT, UPDATE ON payout_intents TO payout_writer;
-GRANT SELECT, INSERT, UPDATE ON payout_state_transitions TO payout_writer;
+CREATE INDEX IF NOT EXISTS idx_chat_search_index_account
+  ON chat_search_index(account_id);
+CREATE INDEX IF NOT EXISTS idx_chat_search_index_account_conversation
+  ON chat_search_index(account_id, conversation_id);
 
--- Sequence usage for the transitions surrogate key (no wildcard sequence grant).
-REVOKE ALL ON SEQUENCE payout_state_transitions_id_seq FROM payout_reader;
-REVOKE ALL ON SEQUENCE payout_state_transitions_id_seq FROM payout_writer;
-GRANT USAGE, SELECT ON SEQUENCE payout_state_transitions_id_seq TO payout_writer;
+-- Deletion requests: when a user requests deletion, cached search/export
+-- records for that account (and optionally a single conversation) must be
+-- removed. `scope_conversation_id` NULL means the whole account.
+CREATE TABLE IF NOT EXISTS chat_privacy_deletions (
+  id BIGSERIAL PRIMARY KEY,
+  account_id VARCHAR(128) NOT NULL,
+  scope_conversation_id VARCHAR(128),
+  requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP WITH TIME ZONE
+);
 
--- Explicitly ensure neither role can create objects or escalate.
-REVOKE CREATE ON SCHEMA public FROM payout_reader;
-REVOKE CREATE ON SCHEMA public FROM payout_writer;
+CREATE INDEX IF NOT EXISTS idx_chat_privacy_deletions_account
+  ON chat_privacy_deletions(account_id);

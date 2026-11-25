@@ -39,6 +39,29 @@ user-facing message. No transaction is submitted in that case; the user can
 review the new state and retry. Existing safety properties (double-submit
 protection and audit logging) are preserved across this check.
 
+### Client cache partitioning
+
+Portfolio, history, and payout caches are keyed by the full account/network
+identity rather than a single global key. Each cache entry is namespaced by:
+
+- the active wallet address,
+- the network passphrase (e.g. `Test SDF Network ; September 2015`), and
+- a schema/data version component.
+
+This prevents data from one wallet or network leaking into another when the
+user switches accounts or networks in the same browser session.
+
+Caches are invalidated (dropped, not just re-keyed) when:
+
+- the wallet disconnects,
+- the active account changes, or
+- the stored data version is incompatible with the current schema version
+  (for example after a deploy that changes the cache shape).
+
+On invalidation the affected views refetch from the API instead of rendering
+stale entries, so a user never sees another account's portfolio, history, or
+payout state.
+
 ### Compatibility notes
 
 ## Contract deployment manifest

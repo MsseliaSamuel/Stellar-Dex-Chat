@@ -67,6 +67,78 @@ cargo test -p <contract-crate> golden_events
 Keep fixtures synthetic: use public test addresses/contract IDs only, never real user data or
 credentials.
 
+## Client cache partitioning fixtures
+
+Portfolio, history, and payout caches are partitioned by the full account/network identity
+(wallet address + network passphrase) plus a schema/data version component. Fixtures for these
+caches live alongside the other frontend fixtures and must exercise the partitioning and
+invalidation paths.
+
+### Cache key shape
+
+A cache key is composed of:
+
+- `wallet` — the Stellar public address (synthetic/public test identifier only).
+- `network` — the network passphrase (e.g. `Test SDF Network ; September 2015`).
+- `schemaVersion` — the client data/schema version the cached payload was written under.
+
+Fixtures must use distinct synthetic wallets and networks so that cross-partition leakage is
+detectable.
+
+### Invalidation cases covered by fixtures
+
+- **Disconnect** — disconnecting a wallet clears all cache partitions for that wallet/network.
+- **Account change** — switching accounts must not surface another account's cached portfolio,
+  history, or payout data.
+- **Schema version change** — a cached payload written under an incompatible `schemaVersion` is
+  treated as a miss and refetched rather than served stale.
+
+### Running the cache fixtures
+
+```bash
+pnpm test:unit -- cache
+```
+
+Cache fixtures are deterministic and synthetic: they use only public test addresses and network
+passphrases, never real user data or credentials.
+
+## Chat search and export privacy fixtures
+
+Chat search indexes and exports are account-scoped: they include only the selected account's
+permitted conversations. Fixtures for these paths must exercise the scoping, redaction, and
+deletion behavior below.
+
+### Account scoping
+
+- Search results and exports are keyed by the full account identity (wallet address + network
+  passphrase), matching the cache partitioning scheme above.
+- Fixtures use at least two distinct synthetic accounts with overlapping conversation IDs so that
+  cross-account leakage is detectable.
+- A search or export for account A must never include conversations, messages, or metadata that
+  belong only to account B.
+
+### Payout-sensitive redaction
+
+- Payout-sensitive fields (payout destination, bank/account identifiers, amounts tied to a payout
+  record) are redacted from search results and exports.
+- Fixtures include a conversation referencing a synthetic payout record and assert the redacted
+  output omits the sensitive fields while preserving non-sensitive message content.
+
+### Deletion
+
+- When the user requests deletion, cached search/export records for that account are removed.
+- Fixtures assert that after deletion a subsequent search or export returns no cached records for
+  the deleted account, and that other accounts' cached records are unaffected.
+
+### Running the chat privacy fixtures
+
+```bash
+pnpm test:unit -- chat-privacy
+```
+
+Chat privacy fixtures are deterministic and synthetic: they use only public test addresses and
+network passphrases, never real user data or credentials.
+
 ## Emergency pause / recovery drill
 
 The operator drill for emergency pause and recovery is a repeatable testnet/local-network
