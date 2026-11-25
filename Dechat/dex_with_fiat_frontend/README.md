@@ -115,6 +115,16 @@ validates successfully) and the failure edge cases (Wasm hash / contract ID /
 spec version mismatch, missing admin/oracle configuration, and a cross-network
 manifest being rejected).
 
+## Accessibility: motion and contrast
+
+Transaction status surfaces respect `prefers-reduced-motion` and keep a
+non-animated icon + text cue in every state. Status colours are validated at
+WCAG 2.1 AA in light, dark, and forced-colors modes; token values live in
+`src/lib/statusContrast.ts` and are mirrored by CSS custom properties in
+`src/app/globals.css`. When changing either, keep both in sync and run the
+focused regression suite described in
+[docs/ACCESSIBILITY_REDUCED_MOTION_CONTRAST.md](../../docs/ACCESSIBILITY_REDUCED_MOTION_CONTRAST.md).
+
 ## Development
 
 ## Contributing

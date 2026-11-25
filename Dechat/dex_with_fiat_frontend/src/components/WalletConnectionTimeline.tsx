@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 interface WalletConnectionTimelineProps {
   isConnected: boolean;
@@ -21,6 +22,14 @@ type TimelineStep = {
   detail?: string;
 };
 
+/** Non-colour status text so each step is understandable without animation. */
+const STEP_STATUS_LABELS: Record<TimelineStep['status'], string> = {
+  done: 'completed',
+  active: 'in progress',
+  pending: 'not started',
+  error: 'needs attention',
+};
+
 export default function WalletConnectionTimeline({
   isConnected,
   isNetworkMismatch,
@@ -30,6 +39,8 @@ export default function WalletConnectionTimeline({
   onRetry,
   onDisconnectMidTransfer,
 }: WalletConnectionTimelineProps) {
+  const reducedMotion = useReducedMotion();
+
   // Detect wallet drop mid-transfer: was connected on the previous render,
   // now disconnected while a transfer was still active.
   const wasConnectedRef = useRef(isConnected);
@@ -60,7 +71,9 @@ export default function WalletConnectionTimeline({
           : connecting
             ? 'active'
             : 'pending',
-      detail: midTransferDisconnect ? 'Wallet disconnected during transfer' : undefined,
+      detail: midTransferDisconnect
+        ? 'Wallet disconnected during transfer'
+        : undefined,
     },
     {
       id: 'sign',
@@ -87,7 +100,8 @@ export default function WalletConnectionTimeline({
     {
       id: 'ready',
       label: 'Ready',
-      status: connected && !mismatch && !midTransferDisconnect ? 'done' : 'pending',
+      status:
+        connected && !mismatch && !midTransferDisconnect ? 'done' : 'pending',
     },
   ];
 
@@ -114,18 +128,22 @@ export default function WalletConnectionTimeline({
           <li key={step.id} className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2 text-xs">
               <span
+                data-testid="wallet-timeline-dot"
+                data-status={step.status}
                 aria-hidden="true"
-                className={`inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full ${
-                  step.status === 'done'
-                    ? 'bg-green-500'
-                    : step.status === 'active'
-                      ? 'animate-pulse bg-blue-500'
-                      : step.status === 'error'
-                        ? 'bg-red-500'
-                        : 'bg-gray-500'
+                className={`status-timeline-dot inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full border status-dot-${step.status} ${
+                  step.status === 'active' && !reducedMotion
+                    ? 'animate-pulse'
+                    : ''
                 }`}
               />
-              <span className="theme-text-secondary">{step.label}</span>
+              <span className="theme-text-secondary">
+                {step.label}
+                <span className="sr-only">
+                  {' '}
+                  ({STEP_STATUS_LABELS[step.status]})
+                </span>
+              </span>
             </div>
             {step.detail && (
               <p className="pl-[18px] text-[10px] text-red-500 dark:text-red-400">

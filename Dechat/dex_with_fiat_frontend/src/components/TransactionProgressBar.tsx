@@ -1,7 +1,11 @@
 'use client';
 
 import React from 'react';
+import clsx from 'clsx';
 import { useRtlDirection } from '@/hooks/useRtlDirection';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { TransactionStatusCue } from '@/components/TransactionStatusCue';
+import type { StatusKind } from '@/lib/statusContrast';
 
 export type TransactionStep =
   | 'idle'
@@ -35,6 +39,22 @@ const STEP_LABELS: Record<TransactionStep, string> = {
   read_only_outage: 'RPC outage detected. Action paused safely.',
 };
 
+/** Map a transaction step to a non-animated, AA-contrast status cue. */
+export function getStatusKindForStep(step: TransactionStep): StatusKind {
+  if (step === 'settled') return 'success';
+  if (step === 'failed') return 'failure';
+  if (step === 'retryable_error' || step === 'read_only_outage') {
+    return 'warning';
+  }
+  return 'progress';
+}
+
+/** Clamp the reported percentage so ARIA and the fill width always agree. */
+export function clampProgressPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
 export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
   currentStep,
   progressPercent,
@@ -44,25 +64,23 @@ export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
   onCancel,
 }) => {
   const { dir } = useRtlDirection();
+  const reducedMotion = useReducedMotion();
   const isFailed = currentStep === 'failed';
   const isRetryable = currentStep === 'retryable_error';
-  const isSettled = currentStep === 'settled';
-  const isOutage = currentStep === 'read_only_outage';
 
-  const barColor = isSettled
-    ? 'bg-green-600'
-    : isFailed
-    ? 'bg-red-600'
-    : isRetryable
-    ? 'bg-yellow-500'
-    : isOutage
-    ? 'bg-amber-600'
-    : 'bg-blue-600';
+  const status = getStatusKindForStep(currentStep);
+  const safeProgress = clampProgressPercent(progressPercent);
+  const description = errorMessage || STEP_LABELS[currentStep];
+  const isAlert = status === 'failure';
 
   return (
     <div
       role="progressbar"
-      aria-valuenow={progressPercent}
+      data-testid="transaction-progress-bar"
+      data-status={status}
+      data-reduced-motion={reducedMotion ? 'true' : 'false'}
+      dir={dir}
+      aria-valuenow={safeProgress}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={title || STEP_LABELS[currentStep]}
@@ -72,23 +90,36 @@ export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
         <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 uppercase tracking-wide">
           {title || 'Transaction Progress'}
         </span>
-        <span className="text-xs font-mono font-medium text-gray-500">
-          {progressPercent}%
+        <span className="text-xs font-mono font-medium text-gray-500 dark:text-gray-400">
+          {safeProgress}%
         </span>
       </div>
 
-      {/* Progress Track */}
+      {/* Progress track — colour is never the only status signal (issue #295). */}
       <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden mb-3">
         <div
-          className={`h-full transition-all duration-300 ease-out ${barColor}`}
-          style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }}
+          data-testid="transaction-progress-fill"
+          className={clsx(
+            'status-progress-fill',
+            `status-fill-${status}`,
+            !reducedMotion && 'transition-all duration-300 ease-out',
+          )}
+          style={{ width: `${safeProgress}%` }}
         />
       </div>
 
-      {/* Step Description */}
-      <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
-        {errorMessage || STEP_LABELS[currentStep]}
-      </p>
+      {/* Step description: polite updates, assertive for terminal failure. */}
+      <div
+        role={isAlert ? 'alert' : 'status'}
+        aria-live={isAlert ? 'assertive' : 'polite'}
+        aria-atomic="true"
+        className="mb-2 flex flex-wrap items-center gap-2"
+      >
+        <TransactionStatusCue status={status} />
+        <p className="text-xs text-gray-700 dark:text-gray-300">
+          {description}
+        </p>
+      </div>
 
       {/* Action buttons if in retryable or failed state */}
       {(isRetryable || isFailed) && (
@@ -97,7 +128,7 @@ export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
             <button
               type="button"
               onClick={onRetry}
-              className="px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white rounded text-xs font-medium"
+              className="px-3 py-1 bg-amber-800 hover:bg-amber-900 text-white rounded text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
             >
               Retry Step
             </button>
@@ -106,7 +137,7 @@ export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="px-3 py-1 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 text-gray-700 dark:text-gray-300 rounded text-xs font-medium"
+              className="px-3 py-1 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 rounded text-xs font-medium"
             >
               Cancel
             </button>
@@ -116,3 +147,5 @@ export const TransactionProgressBar: React.FC<TransactionProgressBarProps> = ({
     </div>
   );
 };
+
+export default TransactionProgressBar;

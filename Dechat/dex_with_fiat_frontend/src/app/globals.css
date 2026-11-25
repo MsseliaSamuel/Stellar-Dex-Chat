@@ -27,6 +27,20 @@
   --color-chart-grid: var(--color-border);
   --color-chart-text: var(--color-text-muted);
   --color-chart-background: var(--color-surface);
+  /*
+   * Status cue tokens (#295). Mirrored by src/lib/statusContrast.ts — keep
+   * both in sync; the tests read this file and validate every pair at AA.
+   * Do not use --color-success/--color-warning for status *text*: as soft
+   * fills they fall below 4.5:1 on white.
+   */
+  --status-progress-fg: #1d4ed8;
+  --status-progress-bg: #eff6ff;
+  --status-success-fg: #15803d;
+  --status-success-bg: #f0fdf4;
+  --status-warning-fg: #92400e;
+  --status-warning-bg: #fffbeb;
+  --status-failure-fg: #991b1b;
+  --status-failure-bg: #fef2f2;
 }
 
 [data-theme='dark'] {
@@ -56,6 +70,15 @@
   --color-chart-grid: var(--color-border);
   --color-chart-text: var(--color-text-muted);
   --color-chart-background: var(--color-surface);
+  /* Status cue tokens (#295) — mirrored by src/lib/statusContrast.ts. */
+  --status-progress-fg: #93c5fd;
+  --status-progress-bg: #11233f;
+  --status-success-fg: #86efac;
+  --status-success-bg: #052e16;
+  --status-warning-fg: #fcd34d;
+  --status-warning-bg: #451a03;
+  --status-failure-fg: #fca5a5;
+  --status-failure-bg: #450a0a;
 }
 
 body {
@@ -443,6 +466,79 @@ select:focus {
   border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
+/*
+ * Status cue palette (#295). Colour is an *additional* channel only: every
+ * cue also renders an icon shape and a text label, so nothing depends on
+ * colour perception or on animation being enabled.
+ */
+.status-progress {
+  color: var(--status-progress-fg);
+  background-color: var(--status-progress-bg);
+  border-color: var(--status-progress-fg);
+}
+
+.status-success {
+  color: var(--status-success-fg);
+  background-color: var(--status-success-bg);
+  border-color: var(--status-success-fg);
+}
+
+.status-warning {
+  color: var(--status-warning-fg);
+  background-color: var(--status-warning-bg);
+  border-color: var(--status-warning-fg);
+}
+
+.status-failure {
+  color: var(--status-failure-fg);
+  background-color: var(--status-failure-bg);
+  border-color: var(--status-failure-fg);
+}
+
+.status-cue-icon {
+  color: currentColor;
+}
+
+.status-progress-fill {
+  background-color: var(--status-progress-fg);
+}
+
+.status-fill-progress {
+  background-color: var(--status-progress-fg);
+}
+
+.status-fill-success {
+  background-color: var(--status-success-fg);
+}
+
+.status-fill-warning {
+  background-color: var(--status-warning-fg);
+}
+
+.status-fill-failure {
+  background-color: var(--status-failure-fg);
+}
+
+.status-timeline-dot.status-dot-done {
+  background-color: var(--status-success-fg);
+  border-color: var(--status-success-fg);
+}
+
+.status-timeline-dot.status-dot-active {
+  background-color: var(--status-progress-fg);
+  border-color: var(--status-progress-fg);
+}
+
+.status-timeline-dot.status-dot-error {
+  background-color: var(--status-failure-fg);
+  border-color: var(--status-failure-fg);
+}
+
+.status-timeline-dot.status-dot-pending {
+  background-color: var(--color-text-muted);
+  border-color: var(--color-text-muted);
+}
+
 /* Enhanced shadows */
 .shadow-glow {
   box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
@@ -480,9 +576,57 @@ select:focus {
     0 0 0 4px rgba(59, 130, 246, 0.1);
 }
 
+/*
+ * Reduced motion (#295): CSS-level backstop for every animated status surface
+ * (including animated icons and custom @keyframes classes). Components also
+ * gate their JS-driven transitions with useReducedMotion so the non-animated
+ * icon + text + colour cues remain available in every mode.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .chat-container {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Users can also ask for more contrast without forcing a full system palette
+ * (#295). The validated status tokens already meet AA; thicker borders make
+ * the status surfaces unambiguous without changing colour values.
+ */
+@media (prefers-contrast: more) {
+  .status-cue,
+  .status-progress,
+  .status-success,
+  .status-warning,
+  .status-failure,
+  [data-testid='transaction-progress-bar'] {
+    border-width: 2px;
+  }
+
+  .status-progress-fill {
+    outline: 1px solid currentColor;
+    outline-offset: -1px;
+  }
+}
+
 /* High-contrast mode: ensure all buttons have visible borders */
 @media (forced-colors: active) {
-  button, .btn, [role="button"] {
+  button,
+  .btn,
+  [role='button'] {
     forced-color-adjust: none;
     border: 1px solid ButtonText;
   }
@@ -496,12 +640,43 @@ select:focus {
     outline: 3px solid Highlight;
     outline-offset: 2px;
   }
-  button:focus-visible, .btn:focus-visible, [role="button"]:focus-visible {
+  button:focus-visible,
+  .btn:focus-visible,
+  [role='button']:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }
   .theme-overlay {
     background: Canvas;
+  }
+
+  /* Status surfaces (#295): system colours keep AA contrast in HC mode. */
+  [data-testid='transaction-status-cue'],
+  [data-testid='transaction-progress-bar'],
+  .status-cue,
+  .status-progress,
+  .status-success,
+  .status-warning,
+  .status-failure {
+    color: CanvasText;
+    background-color: Canvas;
+    border: 1px solid CanvasText;
+  }
+
+  .status-cue-icon {
+    color: CanvasText;
+  }
+
+  .status-progress-fill {
+    /* Highlight is user-selected and remains legible against Canvas. */
+    forced-color-adjust: none;
+    background-color: Highlight;
+  }
+
+  .status-timeline-dot {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+    border-color: CanvasText;
   }
 }
 

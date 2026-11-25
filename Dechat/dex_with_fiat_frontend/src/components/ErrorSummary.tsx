@@ -1,9 +1,17 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { AlertCircle, WifiOff, ShieldOff, AlertTriangle, XCircle, X } from 'lucide-react';
+import {
+  AlertCircle,
+  WifiOff,
+  ShieldOff,
+  AlertTriangle,
+  XCircle,
+  X,
+} from 'lucide-react';
 import type { AccessibleError, ErrorCategory } from '@/lib/errorMessages';
 import { buildErrorSummary } from '@/lib/errorMessages';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 function categoryIcon(category: ErrorCategory): React.ReactNode {
   switch (category) {
@@ -12,16 +20,21 @@ function categoryIcon(category: ErrorCategory): React.ReactNode {
     case 'auth':
       return <ShieldOff className="w-4 h-4 flex-shrink-0" aria-hidden="true" />;
     case 'validation':
-      return <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />;
+      return (
+        <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+      );
     case 'rate_limit':
-      return <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />;
+      return (
+        <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+      );
     default:
       return <XCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />;
   }
 }
 
 function containerClasses(category: ErrorCategory): string {
-  const base = 'flex items-start gap-2 rounded-lg border px-3 py-2 mb-4 text-sm';
+  const base =
+    'flex items-start gap-2 rounded-lg border px-3 py-2 mb-4 text-sm';
   switch (category) {
     case 'network':
       return `${base} border-amber-500/40 bg-amber-950/30 text-amber-300`;
@@ -53,14 +66,18 @@ export default function ErrorSummary({
 }: ErrorSummaryProps) {
   const prevMessageRef = useRef<string | null>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (!error) return;
     const summary = buildErrorSummary(error);
     if (summary === prevMessageRef.current) return;
     prevMessageRef.current = summary;
-    summaryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [error]);
+    summaryRef.current?.scrollIntoView({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+    });
+  }, [error, reducedMotion]);
 
   if (!error) return null;
 
@@ -81,7 +98,9 @@ export default function ErrorSummary({
       <div className="flex-1 min-w-0">
         <p className="font-medium leading-snug">{error.message}</p>
         {error.action && (
-          <p className="text-xs opacity-80 mt-0.5 leading-relaxed">{error.action}</p>
+          <p className="text-xs opacity-80 mt-0.5 leading-relaxed">
+            {error.action}
+          </p>
         )}
       </div>
       {!inline && onDismiss && (
