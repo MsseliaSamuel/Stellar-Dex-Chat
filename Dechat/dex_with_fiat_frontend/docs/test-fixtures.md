@@ -102,6 +102,43 @@ pnpm test:unit -- cache
 Cache fixtures are deterministic and synthetic: they use only public test addresses and network
 passphrases, never real user data or credentials.
 
+## Chat search and export privacy fixtures
+
+Chat search indexes and exports are account-scoped: they include only the selected account's
+permitted conversations. Fixtures for these paths must exercise the scoping, redaction, and
+deletion behavior below.
+
+### Account scoping
+
+- Search results and exports are keyed by the full account identity (wallet address + network
+  passphrase), matching the cache partitioning scheme above.
+- Fixtures use at least two distinct synthetic accounts with overlapping conversation IDs so that
+  cross-account leakage is detectable.
+- A search or export for account A must never include conversations, messages, or metadata that
+  belong only to account B.
+
+### Payout-sensitive redaction
+
+- Payout-sensitive fields (payout destination, bank/account identifiers, amounts tied to a payout
+  record) are redacted from search results and exports.
+- Fixtures include a conversation referencing a synthetic payout record and assert the redacted
+  output omits the sensitive fields while preserving non-sensitive message content.
+
+### Deletion
+
+- When the user requests deletion, cached search/export records for that account are removed.
+- Fixtures assert that after deletion a subsequent search or export returns no cached records for
+  the deleted account, and that other accounts' cached records are unaffected.
+
+### Running the chat privacy fixtures
+
+```bash
+pnpm test:unit -- chat-privacy
+```
+
+Chat privacy fixtures are deterministic and synthetic: they use only public test addresses and
+network passphrases, never real user data or credentials.
+
 ## Emergency pause / recovery drill
 
 The operator drill for emergency pause and recovery is a repeatable testnet/local-network

@@ -20,6 +20,55 @@ deflection are measured.
 - Messages render in order with the existing chat UI components.
 - Clarification prompts and deflection notices render as assistant messages.
 
+## Account-scoped privacy for search and export (issue #204)
+
+Search indexes and exports are **account-scoped**. They include only the
+conversations the selected account is permitted to access; conversations owned
+by other accounts are never indexed, returned, or exported, even when the
+caller supplies their ids.
+
+### Search indexing
+
+- The search index is partitioned by account. A query is always evaluated
+  against the selected account's partition only.
+- Indexing a conversation owned by a different account is rejected; the record
+  is not written to the caller's partition.
+- When a conversation is deleted, its index entries are removed from the
+  account partition so stale results cannot surface.
+
+### Export
+
+- Exports are generated from the selected account's permitted conversations
+  only. Requesting an export that references a conversation outside the
+  account's scope fails authorization rather than silently omitting or
+  including it.
+- Exports are produced on demand and are not cached beyond the request.
+
+### Redaction of payout-sensitive fields
+
+Search results and exports redact payout-sensitive fields before they leave the
+account boundary. Redacted fields include payout destination identifiers,
+account/routing numbers, wallet addresses used as payout targets, and any
+provider payout reference. Redaction is applied by the presentation/serialization
+layer, so the raw values never appear in search snippets or export payloads.
+
+### Deletion
+
+When the user requests deletion, cached records are removed:
+
+- The conversation's stored messages, its search index entries, and any cached
+  export artifacts for that conversation are deleted.
+- Deletion is scoped to the requesting account; cross-account deletion is
+  rejected.
+- Deleting a non-existent conversation is an idempotent no-op.
+
+### Compatibility note
+
+This is an intentional behavior change: previously search and export could
+include conversations beyond the selected account. Existing financial safety
+properties (withholding for clarification, declining unsupported numeric
+claims) are unchanged.
+
 ## Clarification quality and unsafe-intent deflection metrics
 
 These metrics are **versioned**. The current version is `v1`. Any change to a
