@@ -28,6 +28,14 @@
 - **Impossible transitions are detectable**: transitions are guarded by a typed transition function that throws a typed `INVALID_TRANSITION` error (carrying `from`/`to`) instead of silently mutating state, so illegal moves surface in tests and at runtime.
 - **Recovery on reload**: persisted state is rehydrated into the typed machine; a transaction left in `submitted`/`pending` past its expiry window is moved to `expired` rather than being re-broadcast, preserving single-submit safety.
 
+## Expired Transaction Recovery (#198)
+
+- **Authoritative refresh before rebuild**: when a transaction is `expired`, recovery first fetches the authoritative account sequence number and the operation status from the network before rebuilding. The rebuild never reuses a stale sequence or assumes the prior operation did not land.
+- **Idempotency keys preserved**: the existing idempotency key is carried across the rebuild unchanged, so a retry of the same logical operation cannot produce a duplicate payout even if the original transaction was in fact submitted.
+- **Renewed confirmation on effect change**: if the rebuilt transaction's effects differ from the originally confirmed effects (e.g. amount, destination, or memo changed because the authoritative state moved), the user must re-confirm before signing. Unchanged effects reuse the prior confirmation.
+- **No duplicate payout**: if the authoritative operation status shows the original operation already succeeded, recovery reconciles to `confirmed` instead of rebuilding and re-submitting, so no second payout is issued.
+- **Failure handling**: if the authoritative sequence/status fetch fails, recovery aborts with a recoverable error and leaves the transaction in `expired`; it is never rebuilt against unknown state.
+
 ## Tests
 
 - `src/contexts/__tests__/walletContextTransitions.test.tsx`
@@ -49,8 +57,15 @@
   - expiry/recovery path: persisted `pending` past expiry rehydrates as `expired`, not re-broadcast
   - authorization/guard path: illegal transitions (e.g. `built → confirmed`, `confirmed → pending`) throw typed `INVALID_TRANSITION` and leave state unchanged
   - persistence: only minimal recovery fields are serialized; terminal states drop the signed XDR
+- `src/transactions/__tests__/expiredRecovery.test.ts`
+  - normal path: expired tx fetches authoritative sequence + operation status, rebuilds with the same idempotency key
+  - duplicate-payout guard: authoritative status shows original op succeeded -> reconciles to `confirmed`, no rebuild/re-submit
+  - effect-change path: rebuilt effects differ -> renewed confirmation required before signing
+  - unchanged-effects path: rebuilt effects match -> prior confirmation reused, no extra prompt
+  - failure path: authoritative fetch fails -> recovery aborts, tx stays `expired`, no rebuild
 
 ## Safety
 
 - No credentials or real user data in fixtures.
 - Existing financial safety checks preserved; wrong-context writes fail closed.
+- Expired-transaction recovery preserves idempotency keys and never rebuilds against unknown authoritative state, preventing duplicate payouts.

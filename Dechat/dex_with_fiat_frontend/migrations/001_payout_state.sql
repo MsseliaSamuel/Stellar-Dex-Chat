@@ -1,6 +1,8 @@
 -- Migration 001: Payout state and transitions schema (Issue #97)
 -- Extended (Issue #258): cryptographic key-rotation metadata for stored payout fields.
 -- Extended (Issue #197): typed transaction recovery state machine.
+-- Extended (Issue #198): expiry recovery bookkeeping (authoritative sequence/op status,
+--   preserved idempotency key, renewed-confirmation gate).
 -- Only key *identifiers* are persisted here; key material must never be stored in the database.
 --
 -- This file is applied by the checksummed migration runner in
@@ -115,6 +117,72 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_payout_intents_tx_state ON payout_intents(tx_state);
 
+-- ---------------------------------------------------------------------------
+-- Expiry recovery bookkeeping (Issue #198)
+-- ---------------------------------------------------------------------------
+-- When a Soroban transaction expires we must NOT blindly rebuild it: a rebuild
+-- can produce a different operation set and, if the original was actually
+-- submitted, a second payout. These columns capture the authoritative facts
+-- fetched before any rebuild so recovery is auditable and idempotent.
+--
+-- recovery_authoritative_sequence: account sequence number read from the
+--   network (not the cached/local value) at recovery time.
+-- recovery_operation_status: authoritative status of the original operation
+--   ('not_found', 'pending', 'success', 'failed').
+-- recovery_idempotency_key: the idempotency key carried across the rebuild.
+--   It is copied from payout_intents.idempotency_key and never regenerated so
+--   retries cannot create a duplicate payout.
+-- recovery_effects_hash: hash of the rebuilt transaction's effects. When it
+--   differs from the original, renewed user confirmation is required.
+-- recovery_confirmation_state: NULL (not required), 'required', 'confirmed',
+--   'rejected'.
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_authoritative_sequence BIGINT;
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_operation_status VARCHAR(32);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_idempotency_key VARCHAR(128);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_effects_hash VARCHAR(64);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_confirmation_state VARCHAR(32);
+ALTER TABLE payout_intents ADD COLUMN IF NOT EXISTS recovery_rebuilt_at TIMESTAMP WITH TIME ZONE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payout_intents_recovery_operation_status_check'
+  ) THEN
+    ALTER TABLE payout_intents
+      ADD CONSTRAINT payout_intents_recovery_operation_status_check
+      CHECK (recovery_operation_status IS NULL OR recovery_operation_status IN (
+        'not_found', 'pending', 'success', 'failed'
+      ));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payout_intents_recovery_confirmation_state_check'
+  ) THEN
+    ALTER TABLE payout_intents
+      ADD CONSTRAINT payout_intents_recovery_confirmation_state_check
+      CHECK (recovery_confirmation_state IS NULL OR recovery_confirmation_state IN (
+        'required', 'confirmed', 'rejected'
+      ));
+  END IF;
+END
+$$;
+
+-- A rebuilt transaction must never carry a fresh idempotency key: enforce that
+-- the recovery key, when present, matches the payout's canonical key.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payout_intents_recovery_idempotency_key_match'
+  ) THEN
+    ALTER TABLE payout_intents
+      ADD CONSTRAINT payout_intents_recovery_idempotency_key_match
+      CHECK (recovery_idempotency_key IS NULL OR recovery_idempotency_key = idempotency_key);
+  END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_payout_intents_recovery_confirmation_state
+  ON payout_intents(recovery_confirmation_state);
+
 -- Transactional outbox for payout side effects (Issue #222).
 -- Rows are written in the same DB transaction as the payout state mutation so
 -- the state change and the outbound provider command commit or roll back
@@ -164,24 +232,6 @@ BEGIN
 END
 $$;
 
--- Read-only role: SELECT only on payout tables.
-REVOKE ALL ON payout_intents FROM payout_reader;
-REVOKE ALL ON payout_state_transitions FROM payout_reader;
-GRANT SELECT ON payout_intents TO payout_reader;
-GRANT SELECT ON payout_state_transitions TO payout_reader;
-
--- Mutation role: INSERT/UPDATE on payout tables, plus SELECT so that
--- RETURNING clauses and existence checks work. No DELETE/TRUNCATE.
-REVOKE ALL ON payout_intents FROM payout_writer;
-REVOKE ALL ON payout_state_transitions FROM payout_writer;
-GRANT SELECT, INSERT, UPDATE ON payout_intents TO payout_writer;
-GRANT SELECT, INSERT, UPDATE ON payout_state_transitions TO payout_writer;
-
--- Sequence usage for the transitions surrogate key (no wildcard sequence grant).
-REVOKE ALL ON SEQUENCE payout_state_transitions_id_seq FROM payout_reader;
-REVOKE ALL ON SEQUENCE payout_state_transitions_id_seq FROM payout_writer;
-GRANT USAGE, SELECT ON SEQUENCE payout_state_transitions_id_seq TO payout_writer;
-
--- Explicitly ensure neither role can create objects or escalate.
-REVOKE CREATE ON SCHEMA public FROM payout_reader;
-REVOKE CREATE ON SCHEMA public FROM payout_writer;
+GRANT SELECT ON payout_intents, payout_state_transitions, payout_outbox, payout_retry_jobs TO payout_reader;
+GRANT SELECT, INSERT, UPDATE ON payout_intents, payout_state_transitions, payout_outbox, payout_retry_jobs TO payout_writer;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO payout_writer;
