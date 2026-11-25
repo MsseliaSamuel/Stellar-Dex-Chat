@@ -67,6 +67,41 @@ cargo test -p <contract-crate> golden_events
 Keep fixtures synthetic: use public test addresses/contract IDs only, never real user data or
 credentials.
 
+## Client cache partitioning fixtures
+
+Portfolio, history, and payout caches are partitioned by the full account/network identity
+(wallet address + network passphrase) plus a schema/data version component. Fixtures for these
+caches live alongside the other frontend fixtures and must exercise the partitioning and
+invalidation paths.
+
+### Cache key shape
+
+A cache key is composed of:
+
+- `wallet` — the Stellar public address (synthetic/public test identifier only).
+- `network` — the network passphrase (e.g. `Test SDF Network ; September 2015`).
+- `schemaVersion` — the client data/schema version the cached payload was written under.
+
+Fixtures must use distinct synthetic wallets and networks so that cross-partition leakage is
+detectable.
+
+### Invalidation cases covered by fixtures
+
+- **Disconnect** — disconnecting a wallet clears all cache partitions for that wallet/network.
+- **Account change** — switching accounts must not surface another account's cached portfolio,
+  history, or payout data.
+- **Schema version change** — a cached payload written under an incompatible `schemaVersion` is
+  treated as a miss and refetched rather than served stale.
+
+### Running the cache fixtures
+
+```bash
+pnpm test:unit -- cache
+```
+
+Cache fixtures are deterministic and synthetic: they use only public test addresses and network
+passphrases, never real user data or credentials.
+
 ## Emergency pause / recovery drill
 
 The operator drill for emergency pause and recovery is a repeatable testnet/local-network
